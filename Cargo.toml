@@ -1,12 +1,15 @@
 [package]
-name = "pomocl"
+name = "pomo"
 version = "0.1.0"
 edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-chrono = "0.4.24"
+chrono = { version = "0.4.24", features = ["serde"] }
 lazy_static = "1.4.0"
 regex = "1.7.1"
+serde = { version = "1.0.157", features = ["derive"] }
+serde_json = "1.0.94"
+serde_with = { version = "2.3.1", features = ["chrono_0_4"] }
 shellexpand = "3.0.0"
