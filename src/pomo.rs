@@ -16,14 +16,13 @@ pub struct PomodoroSetting {
 #[derive(Serialize, Deserialize)]
 pub struct Pomodoro {
     sections: Vec<PomodoroSection>,
-    repetitions: u32,
+    #[serde(with = "ts_seconds")]
+    start: DateTime<Utc>,
 }
 
 #[serde_with::serde_as]
 #[derive(Serialize, Deserialize)]
 pub struct PomodoroSection {
-    #[serde(with = "ts_seconds")]
-    start: DateTime<Utc>,
     #[serde_as(as = "serde_with::DurationSeconds<i64>")]
     duration: Duration,
     state: PomodoroState,
@@ -68,41 +67,51 @@ impl Display for PomodoroState {
 }
 
 impl Pomodoro {
+    pub fn repetitions(&self) -> u32 {
+        self.sections
+            .iter()
+            .filter(|s| s.state == PomodoroState::Work)
+            .count()
+            .try_into()
+            .unwrap()
+    }
     pub fn state(&self, time: DateTime<Utc>) -> CurrentPomoState {
-        let mut current_time = time;
-
-        if let Some(first) = self.sections.first() {
-            if first.start > current_time {
-                return CurrentPomoState {
-                    current_state: PomodoroState::NotStarted,
-                    next_state: self.sections.get(0).unwrap().state,
-                    duration: first.start - current_time,
-                    completed_repetitions: 0,
-                    total_repetitions: self.repetitions,
-                };
-            }
+        let current_time = time;
+        let mut start = self.start;
+        let mut completed = 0;
+        if start > current_time {
+            return CurrentPomoState {
+                current_state: PomodoroState::NotStarted,
+                next_state: self.sections.get(0).map_or(PomodoroState::Done, |s| s.state),
+                duration: start - current_time,
+                completed_repetitions: 0,
+                total_repetitions: self.repetitions(),
+            };
         }
         for (i, s) in self.sections.iter().enumerate() {
-            if s.start < current_time && s.start + s.duration > current_time {
+            if s.state == PomodoroState::Work {
+                completed += 1;
+            }
+            if start < current_time && start + s.duration > current_time {
                 return CurrentPomoState {
                     current_state: s.state,
                     next_state: self
                         .sections
                         .get(i + 1)
                         .map_or(PomodoroState::Done, |sec| sec.state),
-                    duration: (s.start + s.duration) - current_time,
-                    completed_repetitions: u32::try_from(i).unwrap(),
-                    total_repetitions: self.repetitions,
+                    duration: (start + s.duration) - current_time,
+                    completed_repetitions: completed,
+                    total_repetitions: self.repetitions(),
                 };
             }
-            current_time += s.duration;
+            start += s.duration;
         }
         return CurrentPomoState {
             current_state: PomodoroState::Done,
             next_state: PomodoroState::Done,
             duration: Duration::zero(),
-            completed_repetitions: 0,
-            total_repetitions: self.repetitions,
+            completed_repetitions: self.repetitions(),
+            total_repetitions: self.repetitions(),
         };
     }
 }
@@ -128,23 +137,18 @@ impl PomodoroSetting {
     pub fn to_pomodoro(&self) -> Pomodoro {
         let mut pomo = Pomodoro {
             sections: vec![],
-            repetitions: self.repetitions,
+            start: self.start,
         };
-        let mut start = self.start;
         for i in 0..self.repetitions {
             pomo.sections.push(PomodoroSection {
-                start,
                 duration: self.total_work_duration(),
                 state: PomodoroState::Work,
             });
-            start += self.total_work_duration();
             if i < self.repetitions - 1 {
                 pomo.sections.push(PomodoroSection {
-                    start,
                     duration: self.total_break_duration(),
                     state: PomodoroState::Break,
                 });
-                start += self.total_break_duration();
             }
         }
         pomo
