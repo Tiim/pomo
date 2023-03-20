@@ -151,6 +151,7 @@ impl Pomodoro {
                 let completed = self
                     .sections
                     .iter()
+                    .take(i+1)
                     .filter(|s| s.state == PomodoroState::Work)
                     .count();
                 CurrentPomoState {
