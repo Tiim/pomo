@@ -118,12 +118,22 @@ impl Pomodoro {
 
 impl Display for CurrentPomoState {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let next = if self.next_state != self.current_state {
+            format!("(-> {}) ", self.next_state)
+        } else {
+            "".to_string()
+        };
+        let duration = if self.current_state != PomodoroState::Done {
+            format!("{} ", format_duration(self.duration))
+        } else {
+            "".to_string()
+        };
         f.write_str(
             format!(
-                "{} {} (next: {}) {}/{}",
+                "{} {}{}{}/{}",
                 self.current_state,
-                format_duration(self.duration),
-                self.next_state,
+                duration,
+                next,
                 self.completed_repetitions,
                 self.total_repetitions
             )
