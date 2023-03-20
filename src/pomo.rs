@@ -15,20 +15,20 @@ pub struct PomodoroSetting {
 
 #[derive(Serialize, Deserialize)]
 pub struct Pomodoro {
-    sections: Vec<PomodoroSection>,
+    pub sections: Vec<PomodoroSection>,
     #[serde(with = "ts_seconds")]
-    start: DateTime<Utc>,
-    active: bool,
+    pub start: DateTime<Utc>,
+    pub active: bool,
     #[serde(with = "ts_seconds_option")]
-    pause_started: Option<DateTime<Utc>>,
+    pub pause_started: Option<DateTime<Utc>>,
 }
 
 #[serde_with::serde_as]
 #[derive(Serialize, Deserialize)]
 pub struct PomodoroSection {
     #[serde_as(as = "serde_with::DurationSeconds<i64>")]
-    duration: Duration,
-    state: PomodoroState,
+    pub duration: Duration,
+    pub state: PomodoroState,
 }
 
 pub struct CurrentPomoState {
