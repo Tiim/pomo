@@ -28,12 +28,36 @@ fn main() {
         "start" => start_cmd(args.as_slice()[2..].to_vec()),
         "status" => status_cmd(),
         "watch" => watch_cmd(args.as_slice()[2..].to_vec()),
+        "stop" => stop_cmd(),
+        "pause" => pause_cmd(),
+        "unpause"| "continue" => unpause_cmd(),
         _ => Err(FixMeLaterError::S(format!("Unknown command {}", args[1]))),
     };
 
     if let Err(FixMeLaterError::S(str)) = res {
         println!("Cought error: {}", str);
     }
+}
+
+fn pause_cmd() -> CmdResult {
+    let mut pomo = current_pomo()?;
+    pomo.set_pause(Utc::now());
+    write_current_pomo(pomo)?;
+    return Ok(());
+}
+
+fn unpause_cmd() -> CmdResult {
+    let mut pomo = current_pomo()?;
+    pomo.set_unpause(Utc::now());
+    write_current_pomo(pomo)?;
+    return Ok(());
+}
+
+fn stop_cmd() -> CmdResult {
+    let mut pomo = current_pomo()?;
+    pomo.set_active(false);
+    write_current_pomo(pomo)?;
+    return Ok(());
 }
 
 fn status_cmd() -> CmdResult {

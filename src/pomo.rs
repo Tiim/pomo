@@ -1,4 +1,4 @@
-use chrono::serde::ts_seconds;
+use chrono::serde::{ts_seconds, ts_seconds_option};
 use chrono::{DateTime, Duration, Utc};
 use core::fmt::Display;
 use lazy_static::lazy_static;
@@ -18,6 +18,9 @@ pub struct Pomodoro {
     sections: Vec<PomodoroSection>,
     #[serde(with = "ts_seconds")]
     start: DateTime<Utc>,
+    active: bool,
+    #[serde(with = "ts_seconds_option")]
+    pause_started: Option<DateTime<Utc>>,
 }
 
 #[serde_with::serde_as]
@@ -34,6 +37,7 @@ pub struct CurrentPomoState {
     pub duration: Duration,
     pub completed_repetitions: u32,
     pub total_repetitions: u32,
+    pub pause: bool,
 }
 
 #[derive(PartialEq, Serialize, Deserialize, Copy, Clone)]
@@ -66,6 +70,13 @@ impl Display for PomodoroState {
     }
 }
 
+pub enum CurrentSection {
+    Inactive,
+    BeforeStart,
+    Section(usize),
+    AferEnd,
+}
+
 impl Pomodoro {
     pub fn repetitions(&self) -> u32 {
         self.sections
@@ -75,44 +86,137 @@ impl Pomodoro {
             .try_into()
             .unwrap()
     }
-    pub fn state(&self, time: DateTime<Utc>) -> CurrentPomoState {
+    pub fn current_section(&self, t: DateTime<Utc>) -> CurrentSection {
+        if !self.active {
+            return CurrentSection::Inactive;
+        }
+        let time = if let Some(pause_started) = self.pause_started {
+            pause_started
+        } else {
+            t
+        };
         let current_time = time;
         let mut start = self.start;
-        let mut completed = 0;
         if start > current_time {
-            return CurrentPomoState {
-                current_state: PomodoroState::NotStarted,
-                next_state: self.sections.get(0).map_or(PomodoroState::Done, |s| s.state),
-                duration: start - current_time,
-                completed_repetitions: 0,
-                total_repetitions: self.repetitions(),
-            };
+            return CurrentSection::BeforeStart;
         }
         for (i, s) in self.sections.iter().enumerate() {
-            if s.state == PomodoroState::Work {
-                completed += 1;
-            }
             if start < current_time && start + s.duration > current_time {
-                return CurrentPomoState {
-                    current_state: s.state,
-                    next_state: self
-                        .sections
-                        .get(i + 1)
-                        .map_or(PomodoroState::Done, |sec| sec.state),
-                    duration: (start + s.duration) - current_time,
-                    completed_repetitions: completed,
-                    total_repetitions: self.repetitions(),
-                };
+                return CurrentSection::Section(i);
             }
             start += s.duration;
         }
-        return CurrentPomoState {
-            current_state: PomodoroState::Done,
-            next_state: PomodoroState::Done,
-            duration: Duration::zero(),
-            completed_repetitions: self.repetitions(),
-            total_repetitions: self.repetitions(),
+        return CurrentSection::AferEnd;
+    }
+
+    pub fn state(&self, t: DateTime<Utc>) -> CurrentPomoState {
+        let time = if let Some(pause_started) = self.pause_started {
+            pause_started
+        } else {
+            t
         };
+        let pause = self.pause_started.is_some();
+        let section = self.current_section(t);
+        match section {
+            CurrentSection::Inactive => CurrentPomoState {
+                current_state: PomodoroState::Done,
+                next_state: PomodoroState::Done,
+                duration: Duration::zero(),
+                completed_repetitions: 0,
+                total_repetitions: 0,
+                pause,
+            },
+            CurrentSection::BeforeStart => CurrentPomoState {
+                current_state: PomodoroState::NotStarted,
+                next_state: self
+                    .sections
+                    .get(0)
+                    .map_or(PomodoroState::Done, |s| s.state),
+                duration: self.start - time,
+                completed_repetitions: 0,
+                total_repetitions: self.repetitions(),
+                pause,
+            },
+            CurrentSection::Section(i) => {
+                let current_section = self.sections.get(i).unwrap();
+                let start_time = self.start
+                    + self
+                        .sections
+                        .iter()
+                        .take(i)
+                        .map(|s| s.duration)
+                        .reduce(|acc, val| acc + val)
+                        .unwrap_or(Duration::zero());
+                let next_section = self.sections.get(i + 1);
+                let completed = self
+                    .sections
+                    .iter()
+                    .filter(|s| s.state == PomodoroState::Work)
+                    .count();
+                CurrentPomoState {
+                    current_state: current_section.state,
+                    next_state: next_section.map_or(PomodoroState::Done, |sec| sec.state),
+                    duration: (start_time + current_section.duration) - time,
+                    completed_repetitions: u32::try_from(completed).unwrap(),
+                    total_repetitions: self.repetitions(),
+                    pause,
+                }
+            }
+            CurrentSection::AferEnd => CurrentPomoState {
+                current_state: PomodoroState::Done,
+                next_state: PomodoroState::Done,
+                duration: Duration::zero(),
+                completed_repetitions: self.repetitions(),
+                total_repetitions: self.repetitions(),
+                pause,
+            },
+        }
+    }
+    pub fn set_active(&mut self, a: bool) {
+        self.active = a;
+    }
+    pub fn set_pause(&mut self, pause_start: DateTime<Utc>) {
+        self.pause_started = Some(pause_start);
+    }
+    pub fn set_unpause(&mut self, pause_end: DateTime<Utc>) {
+        if let Some(pause_start) = self.pause_started {
+            let sec = self.current_section(pause_start);
+            if let CurrentSection::Section(s) = sec {
+                let section_start_time = self.start
+                    + self
+                        .sections
+                        .iter()
+                        .take(s)
+                        .map(|s| s.duration)
+                        .reduce(|a, v| a + v)
+                        .unwrap_or(Duration::zero());
+                let new_section_dur = pause_start - section_start_time;
+                assert!(new_section_dur > Duration::zero());
+                let split_section_old_dur;
+                let split_section_state;
+                {
+                    let split_section = self.sections.get_mut(s).unwrap();
+                    split_section_old_dur = split_section.duration;
+                    split_section.duration = new_section_dur;
+                    split_section_state = split_section.state;
+                } 
+                self.sections.insert(
+                    s + 1,
+                    PomodoroSection {
+                        duration: pause_end - pause_start,
+                        state: PomodoroState::Break,
+                    },
+                );
+                self.sections.insert(
+                    s + 2,
+                    PomodoroSection {
+                        duration: split_section_old_dur - new_section_dur,
+                        state: split_section_state,
+                    },
+                );
+            }
+            self.pause_started = None;
+        }
     }
 }
 
@@ -128,14 +232,16 @@ impl Display for CurrentPomoState {
         } else {
             "".to_string()
         };
+        let pause = if self.pause { " (paused)" } else { "" };
         f.write_str(
             format!(
-                "{} {}{}{}/{}",
+                "{} {}{}{}/{}{}",
                 self.current_state,
                 duration,
                 next,
                 self.completed_repetitions,
-                self.total_repetitions
+                self.total_repetitions,
+                pause,
             )
             .as_str(),
         )?;
@@ -148,6 +254,8 @@ impl PomodoroSetting {
         let mut pomo = Pomodoro {
             sections: vec![],
             start: self.start,
+            active: true,
+            pause_started: None,
         };
         for i in 0..self.repetitions {
             pomo.sections.push(PomodoroSection {
