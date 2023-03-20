@@ -7,34 +7,67 @@ use crate::{pomo::PomodoroSetting, storage::write_current_pomo};
 use chrono::Utc;
 use pomo::{CurrentSection, PomodoroState};
 
+use clap::{command, Arg, ArgMatches, Command};
 use core::time;
 use std::fs::File;
 use std::io::{stdout, Seek, SeekFrom, Write};
-use std::process::Command;
+use std::process::Command as ProcCommand;
 use std::{env, thread};
 use storage::current_pomo;
-
 type CmdResult = Result<(), FixMeLaterError>;
 
 fn main() {
-    let args: Vec<String> = env::args().collect();
-    if args.len() == 1 {
-        println!("not enough arguments");
-        print_help();
-        return;
-    }
+    let matches = command!()
+        .propagate_version(true)
+        .subcommand_required(true)
+        .arg_required_else_help(true)
+        .subcommand(
+            Command::new("start")
+                .arg_required_else_help(false)
+                .about("Start a new pomodoro")
+                .arg(Arg::new("pom").required(false))
+                .arg(
+                    Arg::new("until")
+                        .short('u')
+                        .long("until")
+                        .value_name("time")
+                        .help(
+                            "adjusts the pomodoro repetitions and work time to match this end time",
+                        )
+                        .required(false),
+                ),
+        )
+        .subcommand(Command::new("status").about("Prints the current pomo"))
+        .subcommand(
+            Command::new("watch")
+                .about("Watch current pomo and print current state every second")
+                .arg_required_else_help(false)
+                .arg(
+                    Arg::new("file")
+                        .required(false)
+                        .help("if specified, writes the status text to this file"),
+                ),
+        )
+        .subcommand(Command::new("stop").about("Stops the pomo."))
+        .subcommand(Command::new("pause").about("Pauses the pomo, can be resumed with 'unpause'"))
+        .subcommand(
+            Command::new("unpause")
+                .alias("continue")
+                .about("Unpauses the pomo"),
+        )
+        .subcommand(Command::new("info").about("Print list of current pomos"))
+        .get_matches();
 
-    let res = match args[1].as_str() {
-        "start" => start_cmd(args.as_slice()[2..].to_vec()),
-        "status" => status_cmd(),
-        "watch" => watch_cmd(args.as_slice()[2..].to_vec()),
-        "stop" => stop_cmd(),
-        "pause" => pause_cmd(),
-        "unpause" | "continue" => unpause_cmd(),
-        "info" => info_cmd(),
-        _ => Err(FixMeLaterError::S(format!("Unknown command {}", args[1]))),
+    let res = match matches.subcommand() {
+        Some(("start", sub)) => start_cmd(sub),
+        Some(("status", _)) => status_cmd(),
+        Some(("watch", sub)) => watch_cmd(sub),
+        Some(("stop", _)) => stop_cmd(),
+        Some(("pause", _)) => pause_cmd(),
+        Some(("unpause", _)) => unpause_cmd(),
+        Some(("info", _)) => info_cmd(),
+        _ => unreachable!(""),
     };
-
     if let Err(FixMeLaterError::S(str)) = res {
         println!("Cought error: {}", str);
     }
@@ -102,12 +135,14 @@ fn status_cmd() -> CmdResult {
     return Ok(());
 }
 
-fn start_cmd(args: Vec<String>) -> CmdResult {
-    let pomodoro_string = if let Some(pstring) = args.get(0) {
-        pstring
-    } else {
-        ""
-    };
+fn start_cmd(args: &ArgMatches) -> CmdResult {
+    let s = "".to_string();
+    let pomodoro_string = args.get_one::<String>("pom").unwrap_or(&s);
+    let until = args.get_one::<String>("until");
+
+    if let Some(_until_time) = until {
+        unimplemented!();
+    }
 
     let pomo_settings = PomodoroSetting::from_string(pomodoro_string, Utc::now());
     let pomo = pomo_settings.to_pomodoro();
@@ -118,8 +153,10 @@ fn start_cmd(args: Vec<String>) -> CmdResult {
     return Ok(());
 }
 
-fn watch_cmd(args: Vec<String>) -> CmdResult {
-    let mut f = args.get(0).map(|path| File::create(path).unwrap());
+fn watch_cmd(args: &ArgMatches) -> CmdResult {
+    let mut f = args
+        .get_one::<String>("file")
+        .map(|path| File::create(path).unwrap());
 
     let pomodoro = current_pomo()?;
 
@@ -129,7 +166,7 @@ fn watch_cmd(args: Vec<String>) -> CmdResult {
         let cur_state = pomodoro.state(Utc::now());
         if cur_state.current_state != pomodoro_state {
             pomodoro_state = cur_state.current_state;
-            Command::new("notify-send")
+            ProcCommand::new("notify-send")
                 .arg(format!("Pomodoro State {}!", pomodoro_state))
                 .output()
                 .unwrap();
@@ -144,15 +181,6 @@ fn watch_cmd(args: Vec<String>) -> CmdResult {
         stdout().flush().unwrap();
         thread::sleep(time::Duration::from_secs(1));
     }
-}
-
-fn print_help() {
-    println!("pomo start [4][p45][b15]");
-    println!("  starts the pomodoro timer in this case with");
-    println!("  4 times 45min of work and 15min ob breaks.");
-    println!("pomo watch [outfile]");
-    println!("  prints the current state every second.");
-    println!("  if outfile is given, it will be written to every second");
 }
 
 impl From<std::io::Error> for FixMeLaterError {
