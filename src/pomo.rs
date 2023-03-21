@@ -9,8 +9,8 @@ use serde_with::serde_as;
 pub struct PomodoroSetting {
     start: DateTime<Utc>,
     repetitions: u32,
-    work_time: u32,
-    break_time: u32,
+    work_time: Duration,
+    break_time: Duration,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -24,7 +24,7 @@ pub struct Pomodoro {
 }
 
 #[serde_with::serde_as]
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Clone, Copy)]
 pub struct PomodoroSection {
     #[serde_as(as = "serde_with::DurationSeconds<i64>")]
     pub duration: Duration,
@@ -85,6 +85,15 @@ impl Pomodoro {
             .count()
             .try_into()
             .unwrap()
+    }
+    pub fn end(&self) -> DateTime<Utc> {
+        return self.start
+            + self
+                .sections
+                .iter()
+                .map(|s| s.duration)
+                .reduce(|a, s| a + s)
+                .unwrap_or(Duration::zero());
     }
     pub fn current_section(&self, t: DateTime<Utc>) -> CurrentSection {
         if !self.active {
@@ -151,7 +160,7 @@ impl Pomodoro {
                 let completed = self
                     .sections
                     .iter()
-                    .take(i+1)
+                    .take(i + 1)
                     .filter(|s| s.state == PomodoroState::Work)
                     .count();
                 CurrentPomoState {
@@ -200,7 +209,7 @@ impl Pomodoro {
                     split_section_old_dur = split_section.duration;
                     split_section.duration = new_section_dur;
                     split_section_state = split_section.state;
-                } 
+                }
                 self.sections.insert(
                     s + 1,
                     PomodoroSection {
@@ -260,17 +269,46 @@ impl PomodoroSetting {
         };
         for i in 0..self.repetitions {
             pomo.sections.push(PomodoroSection {
-                duration: self.total_work_duration(),
+                duration: self.work_time,
                 state: PomodoroState::Work,
             });
             if i < self.repetitions - 1 {
                 pomo.sections.push(PomodoroSection {
-                    duration: self.total_break_duration(),
+                    duration: self.break_time,
                     state: PomodoroState::Break,
                 });
             }
         }
         pomo
+    }
+    /// calculate new work time and repetitions based on end time
+    pub fn adjust_end_to(&mut self, end_time: DateTime<Utc>) {
+        // base formula of total duration, with r = repetitions, w = work time, b = break time:
+        // d = rw + (r-1)b
+        // rewrite in terms of work time:
+        // f(r) = w = (d/r) - ((r-1)b/r)
+        assert!(end_time > self.start);
+        let d = end_time - self.start;
+
+        let f = |r| (d / r) - (self.break_time * (r - 1)) / r;
+
+        let mut reps = 1;
+        let mut w_delta = i64::max_value();
+        // loop over repetitions to find the one where the difference between 
+        // the calculated and the specified work time is the smallest
+        loop {
+            let w = f(reps);
+            let new_w_delta = i64::abs((w - self.work_time).num_seconds());
+            if new_w_delta > w_delta {
+                break;
+            }
+            reps += 1;
+            w_delta = new_w_delta;
+        }
+        reps -= 1;
+        let new_w = f(reps);
+        self.repetitions = u32::try_from(reps).unwrap();
+        self.work_time = new_w;
     }
     /// Parses a string in the format "4p45b15" into the Pomodoro
     /// repetitions: 4, work_time: 45min, break_time: 15min
@@ -288,26 +326,19 @@ impl PomodoroSetting {
         let work_time = if let Some(c) = WORK_TIME_REGEX.captures(s) {
             c.get(1).unwrap().as_str().parse().unwrap()
         } else {
-            45
+            40
         };
         let break_time = if let Some(c) = BREAK_TIME_REGEX.captures(s) {
             c.get(1).unwrap().as_str().parse().unwrap()
         } else {
-            15
+            10
         };
 
         return PomodoroSetting {
             start,
             repetitions,
-            work_time,
-            break_time,
+            work_time: Duration::minutes(work_time),
+            break_time: Duration::minutes(break_time),
         };
-    }
-
-    fn total_work_duration(&self) -> Duration {
-        Duration::minutes(i64::from(self.work_time))
-    }
-    fn total_break_duration(&self) -> Duration {
-        Duration::minutes(i64::from(self.break_time))
     }
 }

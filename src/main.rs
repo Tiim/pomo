@@ -2,9 +2,9 @@ mod pomo;
 mod storage;
 mod util;
 
-use crate::util::FixMeLaterError;
+use crate::util::{FixMeLaterError, parse_time_string};
 use crate::{pomo::PomodoroSetting, storage::write_current_pomo};
-use chrono::Utc;
+use chrono::{Utc, NaiveTime, NaiveDateTime, DateTime, Local, TimeZone};
 use pomo::{CurrentSection, PomodoroState};
 
 use clap::{command, Arg, ArgMatches, Command};
@@ -32,7 +32,7 @@ fn main() {
                         .long("until")
                         .value_name("time")
                         .help(
-                            "adjusts the pomodoro repetitions and work time to match this end time",
+                            "time in the format HH:MM, adjusts the repetition and work duration to match the provided end time",
                         )
                         .required(false),
                 ),
@@ -140,12 +140,14 @@ fn start_cmd(args: &ArgMatches) -> CmdResult {
     let pomodoro_string = args.get_one::<String>("pom").unwrap_or(&s);
     let until = args.get_one::<String>("until");
 
-    if let Some(_until_time) = until {
-        unimplemented!();
-    }
 
-    let pomo_settings = PomodoroSetting::from_string(pomodoro_string, Utc::now());
+    let mut pomo_settings = PomodoroSetting::from_string(pomodoro_string, Utc::now());
+    if let Some(until_time) = until {
+        let date_time = parse_time_string(until_time)?;
+        pomo_settings.adjust_end_to(date_time);
+    }
     let pomo = pomo_settings.to_pomodoro();
+
 
     println!("{}", pomo.state(Utc::now()));
 
