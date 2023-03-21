@@ -19,3 +19,11 @@ Obviously you can use teh `#(pomo status)` command wherever you want.
 
 If you want to display the current pomodoro in [OBS](https://obsproject.com/), then run the command `pomo watch [path/to/pomodoro.txt]` and keep it running.
 `pomo` will update the pomodoro text file every second. Now configure a text source in OBS to read from a file to show it on the screen.
+
+## Installation
+
+Clone this repo and install with `cargo install --path .` or use the following cargo command:
+
+```sh
+cargo install --git https://github.com/Tiim/pomo.git
+```
