@@ -48,7 +48,7 @@ enum FileMode {
 }
 
 fn open_file(file: &str, mode: FileMode) -> Result<File, FixMeLaterError> {
-    let folder = shellexpand::tilde(Path::new(file).to_str().unwrap()).to_string();
+    let folder = shellexpand::tilde(Path::new(file).parent().unwrap().to_str().unwrap()).to_string();
     let file = shellexpand::tilde(file).to_string();
 
     if let Err(err) = fs::create_dir_all(&folder) {
