@@ -2,9 +2,10 @@ mod pomo;
 mod storage;
 mod util;
 
-use crate::util::{FixMeLaterError, parse_time_string};
+use crate::util::{parse_time_string, FixMeLaterError};
 use crate::{pomo::PomodoroSetting, storage::write_current_pomo};
-use chrono::{Utc, NaiveTime, NaiveDateTime, DateTime, Local, TimeZone};
+use chrono::{Utc, Local};
+use notify::EventKind;
 use pomo::{CurrentSection, PomodoroState};
 
 use clap::{command, Arg, ArgMatches, Command};
@@ -13,7 +14,7 @@ use std::fs::File;
 use std::io::{stdout, Seek, SeekFrom, Write};
 use std::process::Command as ProcCommand;
 use std::{env, thread};
-use storage::current_pomo;
+use storage::{current_pomo, subscribe_current_pomo};
 type CmdResult = Result<(), FixMeLaterError>;
 
 fn main() {
@@ -80,7 +81,7 @@ fn info_cmd() -> CmdResult {
         return Ok(());
     }
     if let Some(pause) = pomo.pause_started {
-        println!("paused at {}", pause);
+        println!("paused at {}", pause.with_timezone(&Local));
     }
     let mut start = pomo.start;
     let now = Utc::now();
@@ -98,8 +99,8 @@ fn info_cmd() -> CmdResult {
             "{}{} -- from {} until {}",
             current,
             sec.state,
-            start,
-            start + sec.duration
+            start.with_timezone(&Local),
+            start.with_timezone(&Local) + sec.duration
         );
         start += sec.duration;
     }
@@ -140,7 +141,6 @@ fn start_cmd(args: &ArgMatches) -> CmdResult {
     let pomodoro_string = args.get_one::<String>("pom").unwrap_or(&s);
     let until = args.get_one::<String>("until");
 
-
     let mut pomo_settings = PomodoroSetting::from_string(pomodoro_string, Utc::now());
     if let Some(until_time) = until {
         let date_time = parse_time_string(until_time)?;
@@ -148,8 +148,7 @@ fn start_cmd(args: &ArgMatches) -> CmdResult {
     }
     let pomo = pomo_settings.to_pomodoro();
 
-
-    println!("{}", pomo.state(Utc::now()));
+    println!("{} end: {}", pomo.state(Utc::now()), pomo.end().with_timezone(&Local));
 
     write_current_pomo(pomo)?;
     return Ok(());
@@ -160,11 +159,40 @@ fn watch_cmd(args: &ArgMatches) -> CmdResult {
         .get_one::<String>("file")
         .map(|path| File::create(path).unwrap());
 
-    let pomodoro = current_pomo()?;
+    let mut pomodoro = current_pomo()?;
 
     let mut pomodoro_state = PomodoroState::NotStarted;
 
+    // needed so it won't be freed until the funcion concludes
+    let _watcher;
+
+    let rx = match subscribe_current_pomo() {
+        Err(e) => {
+            println!("unable to subscribe to changes of the config file: {:?}", e);
+            None
+        }
+        Ok((rx, m)) => {
+            _watcher = m;
+            Some(rx)
+        }
+    };
+
     loop {
+        let mut changed = false;
+        if let Some(ref rec) = rx {
+            for e in rec.try_iter() {
+                if let Ok(event) = e {
+                    if let EventKind::Modify(_) = event.kind {
+                        changed = true;
+                    }
+                }
+            }
+        }
+        if changed {
+            pomodoro = current_pomo()?;
+            println!("Reloaded file");
+        }
+
         let cur_state = pomodoro.state(Utc::now());
         if cur_state.current_state != pomodoro_state {
             pomodoro_state = cur_state.current_state;

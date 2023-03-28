@@ -1,5 +1,6 @@
 use chrono::{DateTime, Local, LocalResult, NaiveDateTime, NaiveTime, TimeZone, Utc};
 
+#[derive(Debug)]
 pub enum FixMeLaterError {
     S(String),
 }
