@@ -51,7 +51,7 @@ display the current state:
 set -g status-right ' #(pomo status) '
 ```
 
-Obviously you can use teh `#(pomo status)` command wherever you want.
+Obviously you can use the `#(pomo status)` command wherever you want.
 
 
 ## OBS integration
